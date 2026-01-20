@@ -2,8 +2,8 @@
   console.log("[TrackerExt] Loaded");
 
   // 🔴 Change this when ngrok URL changes
-  // const TRACKING_BASE_URL = "https://email-tracker-1356.onrender.com";
-  const TRACKING_BASE_URL = "https://2db1dd5b5796.ngrok-free.app";
+  const TRACKING_BASE_URL = "https://email-tracker-1356.onrender.com";
+  // const TRACKING_BASE_URL = "https://2db1dd5b5796.ngrok-free.app";
 
   function uuidv4() {
     return crypto.randomUUID();
