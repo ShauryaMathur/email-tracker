@@ -4,3 +4,5 @@
 /app/services/__pycache__
 /app/models/__pycache__
 /__pycache__
+app/.env
+.DS_Store
