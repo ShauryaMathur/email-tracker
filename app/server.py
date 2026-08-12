@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
 from app.models.models import RegisterEmail
+from app.services.health_service import HealthService
 from app.services.mail_service import EmailService
 from app.services.notification_service import NotificationService
 from app.supabase_client import init_supabase
@@ -18,6 +19,7 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 email_service = EmailService()
 notification_service = NotificationService(settings=settings)
+health_service = HealthService()
 
 # 1x1 transparent PNG
 PIXEL = base64.b64decode(
@@ -44,7 +46,25 @@ app.add_middleware(
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    result = await health_service.check()
+
+    if result.transitioned_down:
+        logger.warning("health: supabase went down")
+        await notification_service.send_alert(
+            "🔴 Supabase looks unreachable from the backend. "
+            "Tracking opens will fail until it's back — wake it up manually."
+        )
+    elif result.transitioned_up:
+        logger.info("health: supabase recovered", extra={"down_duration_seconds": result.down_duration_seconds})
+        down_for = ""
+        if result.down_duration_seconds is not None:
+            down_for = f" (was down for ~{round(result.down_duration_seconds / 60, 1)} min)"
+        await notification_service.send_alert(f"✅ Supabase is back up{down_for}.")
+
+    return {
+        "status": "ok",
+        "supabase": "up" if result.supabase_up else "down",
+    }
 
 
 @app.get("/track/{uuid}")
