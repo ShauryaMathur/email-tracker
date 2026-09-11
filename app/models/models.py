@@ -4,6 +4,7 @@ from typing import Optional
 
 class EmailRecord(BaseModel):
     id: str
+    user_id: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
     subject: str
     to_email: str

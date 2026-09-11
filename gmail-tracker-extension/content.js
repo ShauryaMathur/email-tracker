@@ -1,5 +1,5 @@
 (function () {
-  const DEBUG = true;
+  const DEBUG = false;
   const LOG_PREFIX = "[TrackerExt]";
 
   function log(message, data) {
@@ -16,6 +16,75 @@
 
   const TRACKING_BASE_URL = "https://email-tracker-1356.onrender.com";
   const TRACK_PATH_PREFIX = "/track/";
+
+  // --- Auth: per-Gmail-account JWT, kept in sync with chrome.storage.local ---
+  // Loaded async on script start and kept fresh via storage.onChanged so that
+  // handleSendClick (which must stay synchronous — see below) can look tokens
+  // up without awaiting anything.
+  let authTokens = {};
+
+  function loadAuthTokens() {
+    chrome.storage.local.get(["authTokens"], (result) => {
+      authTokens = result.authTokens || {};
+      log("Loaded auth tokens from storage", { accounts: Object.keys(authTokens) });
+    });
+  }
+  loadAuthTokens();
+
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "local" && changes.authTokens) {
+      authTokens = changes.authTokens.newValue || {};
+      log("authTokens updated via storage.onChanged", { accounts: Object.keys(authTokens) });
+    }
+  });
+
+  function getStoredToken(email) {
+    if (!email) return null;
+    return authTokens[email]?.token || null;
+  }
+
+  function clearStoredToken(email) {
+    if (!email) return;
+    chrome.storage.local.get(["authTokens"], (result) => {
+      const tokens = result.authTokens || {};
+      delete tokens[email];
+      chrome.storage.local.set({ authTokens: tokens });
+    });
+  }
+
+  function getActiveGmailEmail() {
+    // Gmail's account-switcher button generally has an aria-label like
+    // "Google Account: Full Name (email@example.com)". This is DOM-scraping
+    // and may need updating if Gmail changes its markup — same fragility
+    // tradeoff as getSubject()/getRecipients() below.
+    const accountBtn = document.querySelector(
+      'a[aria-label*="Google Account"], a[aria-label*="Account"][href*="SignOutOptions"]'
+    );
+    const label = accountBtn?.getAttribute("aria-label");
+    const match = label?.match(/\(([^()]+@[^()]+)\)/);
+    if (match) {
+      log("getActiveGmailEmail: resolved from account switcher", { email: match[1] });
+      return match[1];
+    }
+    log("getActiveGmailEmail: could not resolve active account email");
+    return null;
+  }
+
+  let lastSetupTabOpenedAt = 0;
+  function openSetupTab(email) {
+    // Throttle so a burst of sends while logged out doesn't spawn a tab per send.
+    const now = Date.now();
+    if (now - lastSetupTabOpenedAt < 30000) {
+      log("openSetupTab: throttled, a setup tab was opened recently");
+      return;
+    }
+    lastSetupTabOpenedAt = now;
+
+    const url = new URL(`${TRACKING_BASE_URL}/setup`);
+    if (email) url.searchParams.set("email", email);
+    log("openSetupTab: opening", { url: url.toString() });
+    window.open(url.toString(), "_blank");
+  }
 
   function uuidv4() {
     const id = crypto.randomUUID();
@@ -44,7 +113,7 @@
   function getRecipients(compose) {
     if (!compose) return "(unknown)";
 
-    // 1️⃣ All confirmed email chips
+    // 1️⃣ All confirmed email chips (new compose)
     const chipEls = compose.querySelectorAll('div.akl');
     const chipEmails = Array.from(chipEls)
       .map(el => el.innerText.trim())
@@ -56,19 +125,53 @@
       .map(el => el.value.trim())
       .filter(Boolean);
 
-    // Combine both
-    const recipients = [...chipEmails, ...inputEmails];
+    let recipients = [...chipEmails, ...inputEmails];
+
+    // 3️⃣ Replies: Gmail renders the collapsed "to <name>" recap as a
+    // separate DOM branch, not a descendant of the reply editor at all — so
+    // #1 and #2 above never match it (confirmed via live DOM inspection).
+    // Fall back to the nearest visible [email]-attributed element sitting
+    // just above this reply's message body, which is that recap line.
+    if (recipients.length === 0) {
+      const recapEmail = getReplyRecapEmail(compose);
+      if (recapEmail) recipients = [recapEmail];
+    }
 
     const to = recipients.length > 0 ? recipients.join(", ") : "(unknown)";
     log("Resolved recipients", { to, chipCount: chipEmails.length, inputCount: inputEmails.length });
     return to;
   }
 
-  function extractTrackUuid(src) {
-    if (!src) {
-      log("extractTrackUuid: empty src");
+  function getReplyRecapEmail(compose) {
+    const body = compose.querySelector('div[aria-label="Message Body"]');
+    if (!body) return null;
+    const bodyRect = body.getBoundingClientRect();
+
+    let best = null;
+    let bestGap = Infinity;
+    document.querySelectorAll('[email]').forEach((el) => {
+      if (el.offsetParent === null) return; // skip hidden/detached elements
+      const gap = bodyRect.top - el.getBoundingClientRect().bottom;
+      if (gap >= 0 && gap < 300 && gap < bestGap) {
+        best = el;
+        bestGap = gap;
+      }
+    });
+
+    if (!best) {
+      log("getReplyRecapEmail: no candidate found above message body");
       return null;
     }
+
+    const email = best.getAttribute("email");
+    log("getReplyRecapEmail: resolved from recap line", { email, gap: bestGap });
+    return email;
+  }
+
+  function extractTrackUuid(src) {
+    // No log on the empty/no-match paths — called for every <img> on every
+    // MutationObserver batch, and the overwhelming majority aren't trackers.
+    if (!src) return null;
 
     const decoded = decodeURIComponent(src);
     const directPrefix = `${TRACKING_BASE_URL}${TRACK_PATH_PREFIX}`;
@@ -79,10 +182,7 @@
     }
 
     const markerIndex = decoded.indexOf(TRACK_PATH_PREFIX);
-    if (markerIndex === -1) {
-      log("extractTrackUuid: not a tracker URL", { src });
-      return null;
-    }
+    if (markerIndex === -1) return null;
 
     const candidate = decoded.slice(markerIndex + TRACK_PATH_PREFIX.length).split(/[?#]/)[0];
     log("extractTrackUuid: matched fallback marker", { src, uuid: candidate || null });
@@ -90,24 +190,16 @@
   }
 
   function tagImageAsSenderView(img) {
-    if (!(img instanceof HTMLImageElement)) {
-      log("tagImageAsSenderView: skipped non-image node");
-      return;
-    }
-    if (img.dataset.trackerSenderTagged === "true") {
-      log("tagImageAsSenderView: already tagged", { src: img.getAttribute("src") });
-      return;
-    }
-    if (isComposeImage(img)) {
-      log("tagImageAsSenderView: skipped compose image", { src: img.getAttribute("src") });
-      return;
-    }
+    // No per-candidate logging here on purpose — this runs on every <img> in
+    // every MutationObserver batch, and Gmail's DOM churns constantly (list
+    // virtualization, hover previews, read-state updates, ...). Only the
+    // actual tag-rewrite below is worth a log line.
+    if (!(img instanceof HTMLImageElement)) return;
+    if (img.dataset.trackerSenderTagged === "true") return;
+    if (isComposeImage(img)) return;
 
     const uuid = extractTrackUuid(img.getAttribute("src"));
-    if (!uuid) {
-      log("tagImageAsSenderView: skipped non-tracker image", { src: img.getAttribute("src") });
-      return;
-    }
+    if (!uuid) return;
 
     const before = img.getAttribute("src");
     const url = new URL(`${TRACKING_BASE_URL}/track/${uuid}`);
@@ -129,20 +221,16 @@
   }
 
   function tagSenderViewTrackers(root = document) {
+    // Runs on every MutationObserver batch — no per-call logging (see
+    // tagImageAsSenderView for why). Only an actual tag-rewrite logs.
     if (root instanceof HTMLImageElement) {
-      log("tagSenderViewTrackers: scanning single image node");
       tagImageAsSenderView(root);
       return;
     }
 
     if (root instanceof Element || root instanceof Document) {
-      const imgs = root.querySelectorAll("img");
-      log("tagSenderViewTrackers: scanning image collection", { count: imgs.length });
-      imgs.forEach(tagImageAsSenderView);
-      return;
+      root.querySelectorAll("img").forEach(tagImageAsSenderView);
     }
-
-    log("tagSenderViewTrackers: skipped unsupported root", { nodeType: root?.nodeType });
   }
 
   function findReplyCompose(sendBtn) {
@@ -175,15 +263,29 @@
       return;
     }
 
+    const activeEmail = getActiveGmailEmail();
+    const token = getStoredToken(activeEmail);
+
+    if (!token) {
+      log("handleSendClick: no auth token for this account, sending untracked", { activeEmail });
+      openSetupTab(activeEmail);
+      return;
+    }
+
     const uuid = uuidv4();
 
     const subject = getSubject(compose);
     const to = getRecipients(compose);
 
-    // Register final metadata
+    // Register final metadata. Not awaited — the pixel below must be
+    // appended synchronously, in this same click handler, or Gmail may
+    // finish serializing the send before we get the chance.
     fetch(`${TRACKING_BASE_URL}/register`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
       body: JSON.stringify({
         uuid,
         subject,
@@ -191,6 +293,10 @@
       })
     }).then((res) => {
       log("register call completed", { status: res.status, ok: res.ok, uuid });
+      if (res.status === 401) {
+        log("register: token rejected, clearing stored token", { activeEmail });
+        clearStoredToken(activeEmail);
+      }
     }).catch((err) => {
       log("register call failed", { uuid, error: String(err) });
     });
@@ -233,14 +339,12 @@
   }, true);
 
   const observer = new MutationObserver((mutations) => {
-    log("MutationObserver triggered", { mutationCount: mutations.length });
+    // No per-batch logging — Gmail's DOM churns on essentially every
+    // interaction, so this fires constantly. tagImageAsSenderView() is the
+    // one that logs, and only when it actually finds a tracker pixel.
     for (const mutation of mutations) {
       for (const node of mutation.addedNodes) {
         if (node instanceof Element || node instanceof HTMLImageElement) {
-          log("MutationObserver processing added node", {
-            nodeName: node.nodeName,
-            nodeType: node.nodeType
-          });
           tagSenderViewTrackers(node);
         }
       }
@@ -248,7 +352,6 @@
   });
 
   observer.observe(document.documentElement, { childList: true, subtree: true });
-  log("MutationObserver started");
   window.addEventListener("hashchange", () => {
     log("hashchange detected", { href: window.location.href, hash: window.location.hash });
     tagSenderViewTrackers(document);

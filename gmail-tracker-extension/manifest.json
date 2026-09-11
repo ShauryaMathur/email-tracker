@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Gmail UUID Tracker Injector",
-  "version": "1.0",
+  "version": "1.1",
   "description": "Injects UUID into tracking pixel src in Gmail compose",
-  "permissions": [],
+  "permissions": ["storage"],
   "host_permissions": [
     "https://mail.google.com/*"
   ],
@@ -12,6 +12,11 @@
       "matches": ["https://mail.google.com/*"],
       "js": ["content.js"],
       "run_at": "document_start"
+    },
+    {
+      "matches": ["https://email-tracker-1356.onrender.com/setup*"],
+      "js": ["auth-bridge.js"],
+      "run_at": "document_idle"
     }
   ]
 }

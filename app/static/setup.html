@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Email Tracker — Setup</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f5f5f7;
+    --card: #ffffff;
+    --text: #1c1c1e;
+    --muted: #6e6e73;
+    --border: #e0e0e2;
+    --accent: #2f6fed;
+    --accent-text: #ffffff;
+    --error: #d1433a;
+    --ok: #1a8a4a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121214;
+      --card: #1c1c1f;
+      --text: #f2f2f3;
+      --muted: #9a9aa0;
+      --border: #303033;
+      --accent: #5b8dfc;
+      --accent-text: #0b0b0c;
+      --error: #ff6b60;
+      --ok: #4fd17a;
+      --muted: #9a9aa0;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    padding: 24px;
+  }
+  .card {
+    width: 100%;
+    max-width: 380px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 28px 24px;
+  }
+  h1 {
+    font-size: 17px;
+    font-weight: 600;
+    margin: 0 0 4px;
+  }
+  p.sub {
+    color: var(--muted);
+    font-size: 13px;
+    margin: 0 0 20px;
+    line-height: 1.5;
+  }
+  label {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  input {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+    font-size: 15px;
+    margin-bottom: 14px;
+  }
+  input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  button {
+    width: 100%;
+    padding: 11px 12px;
+    border-radius: 8px;
+    border: none;
+    background: var(--accent);
+    color: var(--accent-text);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  button.secondary {
+    background: transparent;
+    color: var(--accent);
+    border: 1px solid var(--border);
+    margin-top: 8px;
+  }
+  .msg {
+    font-size: 13px;
+    margin-top: 12px;
+    line-height: 1.5;
+  }
+  .msg.error { color: var(--error); }
+  .msg.ok { color: var(--ok); }
+  .qr-wrap {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 16px;
+  }
+  .qr-wrap img {
+    width: 180px;
+    height: 180px;
+    border-radius: 8px;
+    background: #fff;
+    padding: 8px;
+  }
+  .manual-key {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    word-break: break-all;
+    margin-bottom: 16px;
+    color: var(--muted);
+  }
+  .step-list {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.6;
+    margin: 0 0 16px;
+    padding-left: 18px;
+  }
+  .step-list code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: 12px;
+  }
+  .done-icon {
+    font-size: 32px;
+    text-align: center;
+    margin-bottom: 8px;
+  }
+  .center-text {
+    text-align: center;
+  }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+  <div class="card">
+
+    <!-- Step: email -->
+    <section id="step-email">
+      <h1>Set up Email Tracker</h1>
+      <p class="sub">Enter the Gmail address you send from.</p>
+      <label for="email-input">Email</label>
+      <input id="email-input" type="email" placeholder="you@gmail.com" autocomplete="email">
+      <button id="email-continue">Continue</button>
+      <div class="msg error hidden" id="email-error"></div>
+    </section>
+
+    <!-- Step: enroll (new user, scan QR) -->
+    <section id="step-enroll" class="hidden">
+      <h1>Scan this in your authenticator app</h1>
+      <p class="sub">Google Authenticator, Authy, 1Password — anything that does TOTP codes.</p>
+      <div class="qr-wrap"><img id="qr-image" alt="TOTP QR code"></div>
+      <label>Can't scan? Enter this key manually</label>
+      <div class="manual-key" id="manual-key"></div>
+      <label for="enroll-code">Enter the 6-digit code it shows</label>
+      <input id="enroll-code" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="123456">
+      <button id="enroll-continue">Verify &amp; continue</button>
+      <div class="msg error hidden" id="enroll-error"></div>
+    </section>
+
+    <!-- Step: login (existing, already enrolled) -->
+    <section id="step-login" class="hidden">
+      <h1>Enter your code</h1>
+      <p class="sub">Open your authenticator app and enter the current 6-digit code.</p>
+      <label for="login-code">Code</label>
+      <input id="login-code" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="123456">
+      <button id="login-continue">Log in</button>
+      <div class="msg error hidden" id="login-error"></div>
+    </section>
+
+    <!-- Step: telegram linking -->
+    <section id="step-telegram" class="hidden">
+      <h1>Connect Telegram</h1>
+      <ol class="step-list">
+        <li>Open Telegram and search for <strong id="bot-username">the bot</strong></li>
+        <li>Send it <code>/start</code> — it'll reply with your numeric Chat ID</li>
+        <li>Paste that Chat ID below</li>
+      </ol>
+      <label for="chat-id-input">Telegram Chat ID</label>
+      <input id="chat-id-input" type="text" inputmode="numeric" placeholder="123456789">
+      <button id="telegram-continue">Finish setup</button>
+      <div class="msg error hidden" id="telegram-error"></div>
+    </section>
+
+    <!-- Step: done -->
+    <section id="step-done" class="hidden">
+      <div class="done-icon">✅</div>
+      <h1 class="center-text">You're all set</h1>
+      <p class="sub center-text">You can close this tab and go back to Gmail.</p>
+    </section>
+
+  </div>
+
+<script>
+(function () {
+  const API_BASE = window.location.origin;
+
+  const state = {
+    email: null,
+    token: null,
+    telegramLinked: false,
+  };
+
+  const steps = ["email", "enroll", "login", "telegram", "done"];
+  function showStep(name) {
+    steps.forEach((s) => {
+      document.getElementById(`step-${s}`).classList.toggle("hidden", s !== name);
+    });
+  }
+
+  function setError(id, message) {
+    const el = document.getElementById(id);
+    if (!message) {
+      el.classList.add("hidden");
+      el.textContent = "";
+      return;
+    }
+    el.textContent = message;
+    el.classList.remove("hidden");
+  }
+
+  async function api(path, options) {
+    const res = await fetch(`${API_BASE}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(options?.headers || {}) },
+      body: options?.body ? JSON.stringify(options.body) : undefined,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = new Error(data.detail || `Request failed (${res.status})`);
+      throw err;
+    }
+    return data;
+  }
+
+  // Prefill email from ?email=
+  const params = new URLSearchParams(window.location.search);
+  const prefill = params.get("email");
+  if (prefill) document.getElementById("email-input").value = prefill;
+
+  document.getElementById("email-continue").addEventListener("click", async () => {
+    const email = document.getElementById("email-input").value.trim();
+    setError("email-error", null);
+    if (!email) {
+      setError("email-error", "Enter an email address");
+      return;
+    }
+    state.email = email;
+
+    try {
+      const data = await api("/auth/start", { body: { email } });
+      if (data.status === "existing") {
+        showStep("login");
+      } else {
+        document.getElementById("qr-image").src = data.qr_data_uri;
+        document.getElementById("manual-key").textContent = data.manual_entry_secret;
+        showStep("enroll");
+      }
+    } catch (err) {
+      setError("email-error", err.message);
+    }
+  });
+
+  document.getElementById("enroll-continue").addEventListener("click", async () => {
+    const code = document.getElementById("enroll-code").value.trim();
+    setError("enroll-error", null);
+    try {
+      const data = await api("/auth/verify-enroll", { body: { email: state.email, code } });
+      afterAuth(data);
+    } catch (err) {
+      setError("enroll-error", err.message);
+    }
+  });
+
+  document.getElementById("login-continue").addEventListener("click", async () => {
+    const code = document.getElementById("login-code").value.trim();
+    setError("login-error", null);
+    try {
+      const data = await api("/auth/login", { body: { email: state.email, code } });
+      afterAuth(data);
+    } catch (err) {
+      setError("login-error", err.message);
+    }
+  });
+
+  function afterAuth(data) {
+    state.token = data.token;
+    state.telegramLinked = data.telegram_linked;
+    publishToExtension();
+
+    if (state.telegramLinked) {
+      showStep("done");
+      return;
+    }
+
+    loadTelegramInfo();
+    showStep("telegram");
+  }
+
+  async function loadTelegramInfo() {
+    try {
+      const res = await fetch(`${API_BASE}/auth/telegram-info`);
+      const data = await res.json();
+      if (data.bot_username) {
+        document.getElementById("bot-username").textContent = `@${data.bot_username}`;
+      }
+    } catch (err) {
+      // Non-fatal — instructions still work if the user already knows the bot.
+    }
+  }
+
+  document.getElementById("telegram-continue").addEventListener("click", async () => {
+    const chatId = document.getElementById("chat-id-input").value.trim();
+    setError("telegram-error", null);
+    if (!chatId) {
+      setError("telegram-error", "Enter your Telegram Chat ID");
+      return;
+    }
+    try {
+      await api("/auth/complete-setup", {
+        headers: { Authorization: `Bearer ${state.token}` },
+        body: { telegram_chat_id: chatId },
+      });
+      showStep("done");
+    } catch (err) {
+      setError("telegram-error", err.message);
+    }
+  });
+
+  // Hand the session token to the extension. The extension's own content
+  // script (matching this page's origin) is expected to pick this up and
+  // write it into chrome.storage.local — this page has no chrome.* access
+  // itself, it's just a normal tab.
+  function publishToExtension() {
+    document.body.dataset.trackerEmail = state.email;
+    document.body.dataset.trackerToken = state.token;
+    window.postMessage(
+      { type: "EMAIL_TRACKER_AUTH", email: state.email, token: state.token },
+      window.location.origin
+    );
+  }
+})();
+</script>
+</body>
+</html>

@@ -14,9 +14,10 @@ class EmailService:
         self.repo = EmailRepository()
         self.cache = _cache
 
-    async def create_email(self, payload: RegisterEmail) -> EmailRecord:
+    async def create_email(self, payload: RegisterEmail, user_id: str) -> EmailRecord:
         record = EmailRecord(
             id=str(payload.uuid),
+            user_id=user_id,
             subject=payload.subject,
             to_email=payload.to,
         )
