@@ -15,13 +15,25 @@ class NotificationService:
         self.ops_chat_id = settings.admin_chat_id
         self.bot_token = settings.bot_token
 
-    async def notify(self, uuid: str, to_email: str | None, subject: str | None, chat_id: str | None):
+    async def notify(
+        self,
+        uuid: str,
+        owner_email: str | None,
+        to_email: str | None,
+        subject: str | None,
+        chat_id: str | None,
+    ):
         if not chat_id:
             logger.warning("notify: no telegram chat linked for this email's owner; skipping", extra={"uuid": uuid})
             return
+        # Prefix which inbox this is — needed once the same person links more
+        # than one email identity to the same Telegram chat (a single bot
+        # can only ever have one chat thread per person, so this is how they
+        # tell accounts apart rather than needing a separate bot per inbox).
+        inbox_line = f"Inbox: {owner_email}\n" if owner_email else ""
         await self._send(
             chat_id,
-            f"📬 Email sent to {to_email or 'unknown'} titled {subject or 'unknown'} opened",
+            f"{inbox_line}📬 Email sent to {to_email or 'unknown'} titled {subject or 'unknown'} opened",
             log_extra={"uuid": uuid},
         )
 

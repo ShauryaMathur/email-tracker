@@ -109,7 +109,8 @@ async def track(uuid: str, request: Request, viewer: str | None = Query(default=
         if email:
             owner = await user_repo.get_by_id(email.user_id)
             chat_id = owner.telegram_chat_id if owner else None
-            await notification_service.notify(uuid, email.to_email, email.subject, chat_id=chat_id)
+            owner_email = owner.email if owner else None
+            await notification_service.notify(uuid, owner_email, email.to_email, email.subject, chat_id=chat_id)
 
     return Response(content=PIXEL, media_type="image/png")
 
