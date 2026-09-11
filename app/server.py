@@ -105,7 +105,11 @@ async def track(uuid: str, request: Request, viewer: str | None = Query(default=
     logger.info("track", extra={"uuid": uuid, "was_counted": was_counted, "ip_hash": ip_hash})
 
     if was_counted:
-        email = email_service.cache.get(uuid)
+        # Falls back to a DB fetch (and repopulates the cache) if this uuid
+        # isn't in the in-memory cache — e.g. after a Render free-tier
+        # cold restart wipes it. A raw cache.get() here would silently drop
+        # the notification for anyone whose open lands after such a restart.
+        email = await email_service.get_mail_metadata_by_id(uuid)
         if email:
             owner = await user_repo.get_by_id(email.user_id)
             chat_id = owner.telegram_chat_id if owner else None

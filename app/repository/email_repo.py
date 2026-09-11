@@ -7,7 +7,12 @@ class EmailRepository:
     TABLE = "mail_sends"
 
     async def insert(self, record: EmailRecord):
-        response = await supabase_client.supabase.table(self.TABLE).upsert(record.model_dump(mode="json")).execute()
+        # Plain insert, not upsert: `id` is client-supplied (the extension's
+        # crypto.randomUUID()), so upserting would let anyone who POSTs a
+        # UUID that already belongs to another user's row silently overwrite
+        # its owner. A genuine conflict here (retry, or an actual collision)
+        # surfaces as an error instead of a silent cross-tenant hijack.
+        response = await supabase_client.supabase.table(self.TABLE).insert(record.model_dump(mode="json")).execute()
         return response.data
 
     async def get_mail_metadata_by_id(self, id: str):
