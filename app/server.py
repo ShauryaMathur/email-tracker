@@ -1,8 +1,10 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 import base64
+import binascii
 import datetime
 import hashlib
+import json
 import logging
 
 from fastapi import Depends, FastAPI, HTTPException, Response, Request, Query
@@ -43,6 +45,65 @@ user_service = UserService(settings=settings, notification_service=notification_
 PIXEL = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII="
 )
+
+# The refresh cookie holds a JSON array of raw refresh tokens rather than a
+# single value, because one browser can have several tracked accounts logged
+# in at once (this project's own use case: Gmail + Outlook + Yahoo in the
+# same browser) — a single-value cookie would let each new login silently
+# evict the previous account's ability to silently refresh. Capped so a
+# browser that's logged into a long string of accounts over time doesn't
+# grow the cookie unboundedly; oldest entries are dropped first.
+_MAX_SESSIONS_PER_COOKIE = 8
+
+
+def _read_session_tokens(request: Request) -> list[str]:
+    raw = request.cookies.get(settings.refresh_cookie_name)
+    if not raw:
+        return []
+    try:
+        # The JSON array's own [ ] " characters trigger RFC-2109-style
+        # quoting/backslash-escaping when a raw JSON string is handed to
+        # Python's http.cookies as a Set-Cookie value — confirmed live: the
+        # value that actually round-trips back on the next request's Cookie
+        # header is NOT the same string that was passed to json.dumps(), and
+        # decoding it naively silently produced an empty session list every
+        # time. Base64 sidesteps the quoting question for [ ] " — but its
+        # own '=' padding characters turned out to trigger the exact same
+        # quoting (also confirmed live), so the padding is stripped before
+        # setting the cookie and restored here before decoding.
+        padded = raw + "=" * (-len(raw) % 4)
+        decoded = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+        tokens = json.loads(decoded)
+    except (ValueError, UnicodeDecodeError, binascii.Error):
+        return []
+    return [t for t in tokens if isinstance(t, str)] if isinstance(tokens, list) else []
+
+
+def _write_session_tokens(response: Response, tokens: list[str]) -> None:
+    encoded = base64.urlsafe_b64encode(
+        json.dumps(tokens[-_MAX_SESSIONS_PER_COOKIE:]).encode("utf-8")
+    ).decode("ascii").rstrip("=")
+    response.set_cookie(
+        key=settings.refresh_cookie_name,
+        value=encoded,
+        max_age=settings.refresh_token_expiry_days * 86400,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        # Scoped to /auth — this cookie has no business being sent on
+        # /track/{uuid} pixel hits or anything else.
+        path="/auth",
+    )
+
+
+def _append_session_token(request: Request, response: Response, new_token: str) -> None:
+    _write_session_tokens(response, _read_session_tokens(request) + [new_token])
+
+
+def _replace_session_token(request: Request, response: Response, old_token: str, new_token: str) -> None:
+    tokens = [t for t in _read_session_tokens(request) if t != old_token]
+    tokens.append(new_token)
+    _write_session_tokens(response, tokens)
 
 
 @asynccontextmanager
@@ -149,19 +210,43 @@ async def auth_start(payload: AuthStartRequest):
 
 
 @app.post("/auth/verify-enroll", response_model=AuthResponse)
-async def auth_verify_enroll(payload: VerifyEnrollRequest):
+async def auth_verify_enroll(payload: VerifyEnrollRequest, request: Request, response: Response):
     try:
-        return await user_service.verify_enroll(payload.email, payload.code)
+        auth_response, refresh_token = await user_service.verify_enroll(payload.email, payload.code)
     except AuthError as e:
         raise HTTPException(status_code=400, detail=e.message)
+    _append_session_token(request, response, refresh_token)
+    return auth_response
 
 
 @app.post("/auth/login", response_model=AuthResponse)
-async def auth_login(payload: LoginRequest):
+async def auth_login(payload: LoginRequest, request: Request, response: Response):
     try:
-        return await user_service.login(payload.email, payload.code)
+        auth_response, refresh_token = await user_service.login(payload.email, payload.code)
     except AuthError as e:
         raise HTTPException(status_code=401, detail=e.message)
+    _append_session_token(request, response, refresh_token)
+    return auth_response
+
+
+@app.post("/auth/refresh", response_model=AuthResponse)
+async def auth_refresh(payload: AuthStartRequest, request: Request, response: Response):
+    # Silent re-auth: the setup page calls this on load, before showing any
+    # login form, using the ?email= the extension always includes when it
+    # opens this tab. Success means the user never sees a TOTP prompt at all.
+    candidate_tokens = _read_session_tokens(request)
+    if not candidate_tokens:
+        raise HTTPException(status_code=401, detail="No session")
+
+    try:
+        auth_response, old_refresh_token, new_refresh_token = await user_service.refresh(
+            payload.email, candidate_tokens
+        )
+    except AuthError as e:
+        raise HTTPException(status_code=401, detail=e.message)
+
+    _replace_session_token(request, response, old_refresh_token, new_refresh_token)
+    return auth_response
 
 
 @app.post("/auth/complete-setup")

@@ -1,15 +1,25 @@
 {
   "manifest_version": 3,
-  "name": "Gmail UUID Tracker Injector",
-  "version": "1.1",
-  "description": "Injects UUID into tracking pixel src in Gmail compose",
+  "name": "Email Tracker",
+  "version": "2.0.0",
+  "description": "Tracks when emails you send from Gmail, Outlook, or Yahoo Mail get opened",
   "permissions": ["storage"],
   "host_permissions": [
-    "https://mail.google.com/*"
+    "https://mail.google.com/*",
+    "https://outlook.office.com/*",
+    "https://outlook.live.com/*",
+    "https://outlook.cloud.microsoft/*",
+    "https://mail.yahoo.com/*"
   ],
   "content_scripts": [
     {
-      "matches": ["https://mail.google.com/*"],
+      "matches": [
+        "https://mail.google.com/*",
+        "https://outlook.office.com/*",
+        "https://outlook.live.com/*",
+        "https://outlook.cloud.microsoft/*",
+        "https://mail.yahoo.com/*"
+      ],
       "js": ["content.js"],
       "run_at": "document_start"
     },

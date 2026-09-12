@@ -43,6 +43,11 @@ class LoginRequest(BaseModel):
 class AuthResponse(BaseModel):
     token: str
     telegram_linked: bool
+    # Echoed back so /auth/refresh callers (which don't already know it —
+    # unlike /auth/login and /auth/verify-enroll, refresh has no email input,
+    # just a cookie) know which account this session belongs to, e.g. to key
+    # the extension's per-account authTokens map.
+    email: str
 
 
 class CompleteSetupRequest(BaseModel):

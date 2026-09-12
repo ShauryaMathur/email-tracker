@@ -163,12 +163,18 @@
 <body>
   <div class="card">
 
+    <!-- Step: checking for an existing silent-refresh session before
+         showing any form — see tryAutoRefresh() below. -->
+    <section id="step-loading" class="center-text">
+      <p class="sub">Checking for an existing session…</p>
+    </section>
+
     <!-- Step: email -->
-    <section id="step-email">
+    <section id="step-email" class="hidden">
       <h1>Set up Email Tracker</h1>
-      <p class="sub">Enter the Gmail address you send from.</p>
+      <p class="sub">Enter the email address you send from.</p>
       <label for="email-input">Email</label>
-      <input id="email-input" type="email" placeholder="you@gmail.com" autocomplete="email">
+      <input id="email-input" type="email" placeholder="you@example.com" autocomplete="email">
       <button id="email-continue">Continue</button>
       <div class="msg error hidden" id="email-error"></div>
     </section>
@@ -214,7 +220,7 @@
     <section id="step-done" class="hidden">
       <div class="done-icon">✅</div>
       <h1 class="center-text">You're all set</h1>
-      <p class="sub center-text">You can close this tab and go back to Gmail.</p>
+      <p class="sub center-text">You can close this tab now.</p>
     </section>
 
   </div>
@@ -229,7 +235,7 @@
     telegramLinked: false,
   };
 
-  const steps = ["email", "enroll", "login", "telegram", "done"];
+  const steps = ["loading", "email", "enroll", "login", "telegram", "done"];
   function showStep(name) {
     steps.forEach((s) => {
       document.getElementById(`step-${s}`).classList.toggle("hidden", s !== name);
@@ -265,6 +271,32 @@
   const params = new URLSearchParams(window.location.search);
   const prefill = params.get("email");
   if (prefill) document.getElementById("email-input").value = prefill;
+
+  // Silent re-auth: if this browser already has a still-valid refresh
+  // session for this exact account (an HttpOnly cookie the extension itself
+  // never sees or touches — see app/server.py), skip the TOTP form
+  // entirely. This is what makes a remove+reinstall of the extension (which
+  // wipes chrome.storage.local, including the cached JWT) cost nothing more
+  // than "open this tab once" instead of a fresh TOTP entry. Only attempted
+  // when ?email= is present — the extension always includes it when it
+  // opens this tab, and without it there's no account to match the cookie's
+  // (possibly multiple) sessions against.
+  async function tryAutoRefresh() {
+    if (!prefill) return false;
+    try {
+      const data = await api("/auth/refresh", { body: { email: prefill } });
+      state.email = data.email;
+      afterAuth(data);
+      return true;
+    } catch (err) {
+      return false;
+    }
+  }
+
+  (async () => {
+    const refreshed = await tryAutoRefresh();
+    if (!refreshed) showStep("email");
+  })();
 
   document.getElementById("email-continue").addEventListener("click", async () => {
     const email = document.getElementById("email-input").value.trim();

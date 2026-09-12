@@ -24,6 +24,16 @@ class Settings(BaseSettings):
     fernet_key: str
     totp_issuer: str = "Email Tracker"
 
+    # Long-lived refresh cookie so a remove+reinstall of the extension (which
+    # wipes chrome.storage.local, including the cached JWT) doesn't force a
+    # fresh TOTP login — see app/repository/session_repo.py. Deliberately
+    # mirrors jwt_expiry_days as the default rather than being independently
+    # tuned; there's no reason for the two to drift apart today.
+    refresh_token_expiry_days: int = 30
+    # Scoped to /auth so it's never sent on unrelated requests (e.g. the
+    # /track/{uuid} pixel hit) that have no use for it.
+    refresh_cookie_name: str = "et_sessions"
+
     model_config = SettingsConfigDict(
         env_file=(ROOT_DIR / "app/.env", ROOT_DIR / ".env"),
         env_file_encoding="utf-8",
